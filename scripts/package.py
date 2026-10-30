@@ -14,6 +14,7 @@ destination.parent.mkdir(exist_ok=True)
 with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
     for filename in sorted(files):
         info = ZipInfo(filename, date_time=(2020, 1, 1, 0, 0, 0))
+        info.create_system = 3  # Keep ZIP metadata identical on Windows and Linux.
         info.compress_type = ZIP_DEFLATED
         info.external_attr = 0o644 << 16
         # Normalize line endings so Windows and CI produce the same bytes.
