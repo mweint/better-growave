@@ -21,15 +21,16 @@ globalThis.TTLWishlist = (() => {
       cartVariant: variant?.available === true && !product.requires_selling_plan ? String(variant.id) : null,
       variantTitle: variant?.title && variant.title !== 'Default Title' ? variant.title : '',
       price: typeof variant?.price === 'number' ? variant.price : (!item.variant && typeof product.price === 'number' ? product.price : null),
+      comparePrice: typeof variant?.compare_at_price === 'number' ? variant.compare_at_price : null,
       image: variant?.featured_image?.src || product.featured_image || item.image,
       type: product.type || 'Other',
       status: available === false ? 'out' : available === true ? (preorder ? 'preorder' : 'in') : 'unknown',
       checked: true};
   }
-  function select(items, {search = '', stock = 'in', sort = 'title', type = ''}) {
+  function select(items, {search = '', stock = 'in', sort = 'title'}) {
     const words = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-    const result = items.filter(i => (stock === 'all' || i.status === stock) && (!type || i.type === type) &&
-      words.every(w => `${i.title} ${i.variantTitle || ''} ${i.type || ''}`.toLocaleLowerCase().includes(w)));
+    const result = items.filter(i => (stock === 'all' || i.status === stock) &&
+      words.every(w => `${i.title} ${i.variantTitle || ''}`.toLocaleLowerCase().includes(w)));
     result.sort((a, b) => {
       if (sort === 'original') return a.order - b.order;
       if (sort === 'price' || sort === 'price-desc') {

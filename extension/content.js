@@ -10,7 +10,9 @@
   let cart, removing = false, actionMessage = '';
   let host, view, ui, running = false, stopped = false, active = 0, timer, lastSignature = '', lastRoots = [];
   let loadMessage = 'Waiting for your wishlist…', complete = false, emptySince = 0;
-  let prefs = {stock: 'in', sort: 'title', type: '', search: ''};
+  let prefs = {stock: 'in', sort: 'title', search: '', layout: 'list'};
+  let renderTimer;
+  const scheduleRender = () => { if (!renderTimer) renderTimer=setTimeout(()=>{renderTimer=null;render();},100); };
   const extension = globalThis.browser || globalThis.chrome;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   function roots(node) {
@@ -114,13 +116,13 @@
   }
   function pump() {
     for (const [key, item] of items) {
-      if (active >= 3) break;
+      if (active >= 6) break;
       if (item.checked || item.pending) continue;
       active++; item.pending = true;
       getProduct(item.url).then(product => {
         if (items.get(key) === item) items.set(key, core.enrich(item, product));
       }).catch(() => { item.checked = true; item.status = 'unknown'; })
-        .finally(() => { item.pending = false; if (items.has(key)) items.get(key).pending = false; active--; render(); setTimeout(pump, 250); });
+        .finally(() => { item.pending = false; if (items.has(key)) items.get(key).pending = false; active--; scheduleRender(); pump(); });
     }
   }
   function loaders() {
@@ -149,13 +151,12 @@
         loadMessage = `Loading more items… ${items.size} found`; render();
         button.click();
         let progressed = false;
-        for (let n = 0; n < 40 && !stopped; n++) {
-          await sleep(500); scan();
-          if (lastSignature !== before || !button.isConnected || !loaders().includes(button)) { progressed = true; break; }
+        for (let n = 0; n < 200 && !stopped; n++) {
+          await sleep(100); scan();
+          if (lastSignature !== before || !loaders().length) { progressed = true; break; }
         }
         if (stopped) break;
         if (!progressed) { loadMessage = 'Loading stalled. Use “Load all / retry” to try again.'; break; }
-        await sleep(600);
         if (pages === 499) loadMessage = 'Paused after 500 loading steps. Click “Load all / retry” to continue.';
       }
     } catch { loadMessage = 'Could not load more items. The original wishlist is available below.'; }
@@ -170,11 +171,8 @@
     const list = [...items.values()];
     const counts = Object.fromEntries(Object.keys(labels).map(k => [k, list.filter(i => i.status === k).length]));
     for (const option of ui.stock.options) option.textContent = option.value === 'all' ? `Everything (${list.length})` : `${labels[option.value]} (${counts[option.value]})`;
-    const types = [...new Set(list.map(i => i.type).filter(Boolean))].sort();
-    const oldType = ui.type.value;
-    ui.type.replaceChildren(element('option', 'All types', {value: ''}), ...types.map(t => element('option', t, {value: t})));
-    ui.type.value = types.includes(oldType) ? oldType : '';
-    prefs.type = ui.type.value;
+    ui.list.className = prefs.layout === 'tiles' ? 'records tiles' : 'records';
+    for(const [mode,button] of Object.entries(ui.modes))button.setAttribute('aria-pressed',String(mode===prefs.layout));
     const filtered = core.select(list, prefs);
     const checked = list.filter(i => i.checked).length;
     ui.status.textContent = `${loadMessage} Stock checked: ${checked}/${list.length}.`;
@@ -193,17 +191,20 @@
       name.append(element('strong', item.title));
       if (item.variantTitle) name.append(element('small', item.variantTitle));
       link.append(name); row.append(link);
-      row.append(element('span', item.price == null ? '—' : new Intl.NumberFormat('en-US', {style: 'currency', currency: ui.currency}).format(item.price / 100), {class: 'price'}));
+      const price=element('span',null,{class:'price'});
+      const money=amount=>new Intl.NumberFormat('en-US',{style:'currency',currency:ui.currency}).format(amount/100);
+      if(item.comparePrice>item.price && item.price!=null)price.append(element('del',money(item.comparePrice)));
+      price.append(element('span',item.price==null?'—':money(item.price),{class:item.comparePrice>item.price?'sale':''}));row.append(price);
       row.append(element('span', item.checked ? labels[item.status] : 'Checking…', {class: `badge ${item.status}`}));
       const buttons=element('div',null,{class:'item-actions'});
       if(item.cartVariant){
-        const add=element('button','Add to cart',{type:'button','aria-label':`Add ${item.title} to cart`});
+        const add=element('button','Add',{type:'button','aria-label':`Add ${item.title} to cart`,title:'Add to cart'});
         add.disabled=cart?.isBusy() || !['in','preorder'].includes(item.status);
         add.onclick=()=>cart.add(item);buttons.append(add);
       } else if(item.checked && ['in','preorder'].includes(item.status)) {
         buttons.append(element('a','Choose options',{href:item.url,target:'_blank',rel:'noopener noreferrer'}));
       }
-      const remove=element('button','Remove from wishlist',{type:'button','aria-label':`Remove ${item.title} from wishlist`,class:'remove'});
+      const remove=element('button','♥',{type:'button','aria-label':`Remove ${item.title} from wishlist`,title:'Remove from wishlist',class:'remove'});
       remove.disabled=removing;remove.onclick=()=>removeItem(item);buttons.append(remove);
       row.append(buttons);
       fragment.append(row);
@@ -217,7 +218,7 @@
     const container = element('section', null, {id: 'ttl-better-wishlist', 'aria-label': 'Better wishlist'});
     host.before(container); view = container.attachShadow({mode: 'open'});
     const style = element('style', `
-      :host{display:block;margin:24px auto;max-width:1400px;color:#202522;font:15px/1.45 system-ui,sans-serif}
+      :host{display:block;width:min(1424px,calc(100vw - 48px));max-width:none;margin:24px 0;margin-left:calc(50% - min(712px,50vw - 24px));color:#202522;font:15px/1.45 system-ui,sans-serif}
       *{box-sizing:border-box} .panel{font:15px/1.45 system-ui,sans-serif;background:#faf9f5;border:1px solid #d6d9d2;border-radius:14px;padding:24px}
       h2{font-size:26px;margin:0 0 4px;letter-spacing:-.6px} p{margin:8px 0;color:#58615a}
       .eyebrow{font-size:11px;font-weight:750;letter-spacing:1.8px;color:#55745f;margin:0 0 6px}
@@ -233,18 +234,23 @@
       strong{font-size:14px;font-weight:650}small{display:block;margin-top:4px;color:#58615a}.price{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
       .badge{font-size:11px;text-align:center;border-radius:20px;padding:5px 8px;background:#e7e8e5;color:#555}.in{background:#dbeadc;color:#235132}.preorder{background:#fae7c9;color:#714707}
       .note{font-size:12px;margin-top:16px}.empty{padding:24px 0}.original{display:flex;align-items:center;gap:8px;margin-top:16px}.original input{width:auto;margin:0}
-      .layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;align-items:start;font:15px/1.45 system-ui,sans-serif}
-      .panel{min-width:0}.controls{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .layout{display:grid;grid-template-columns:minmax(0,1120px) 280px;gap:24px;align-items:start;font:15px/1.45 system-ui,sans-serif}
+      .panel{min-width:0}.controls{grid-template-columns:2fr 1fr 1fr}
       .cart{position:sticky;top:100px;border:1px solid #d6d9d2;border-radius:14px;background:#faf9f5;padding:20px;max-height:calc(100vh - 120px);overflow:auto}
       .cart h3{font-size:20px;margin:0 0 12px}.cart a{color:#254832}.cart-item{padding:12px 0;border-bottom:1px solid #dedfd8;overflow-wrap:anywhere}.cart-item a{font-weight:650;font-size:13px;text-decoration:none}
       .cart-total{font-weight:700;color:#202522}.cart-status{font-size:12px}.cart-link{display:block;margin-top:16px;font-weight:650}.cart-items{max-height:45vh;overflow:auto}
-      .item-actions{grid-column:1 / -1;display:flex;gap:8px;justify-content:flex-end;align-items:center}.item-actions button{font-size:12px}.item-actions .remove{background:transparent;color:#725042;border-color:#c7b9b2}.item-actions a{font-size:12px;color:#254832}
+      .item-actions{display:flex;gap:6px;justify-content:flex-end;align-items:center}.item-actions button{font-size:12px}.item-actions .remove{background:transparent;color:#9c424b;border-color:transparent;font-size:23px;line-height:1;padding:7px;width:36px;height:36px}.item-actions .remove:hover{background:#f4e6e8}.item-actions a{font-size:12px;color:#254832}
+      .record{grid-template-columns:minmax(0,1fr) 90px 100px 110px;gap:12px;padding:10px 0}.record img,.record .cover{width:52px;height:52px;object-fit:contain;background:white}.price del{display:block;color:#808781;font-size:11px}.sale{color:#a34232}
+      .view-modes{display:flex;gap:4px;margin-left:auto}.view-modes button{background:transparent;color:#526258}.view-modes [aria-pressed=true]{background:#254832;color:white}
+      .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-top:14px}.tiles .record{display:flex;flex-direction:column;align-items:stretch;border:1px solid #dedfd8;border-radius:8px;padding:12px;gap:8px;background:white}.tiles .product{flex-direction:column;align-items:stretch;gap:8px}.tiles .product img,.tiles .cover{width:100%;height:132px;object-fit:contain}.tiles strong{font-size:13px;line-height:1.4}.tiles .price{text-align:left}.tiles .price del{display:inline;margin-right:6px}.tiles .badge{align-self:flex-start}.tiles .item-actions{margin-top:auto}.tiles small{font-size:11px}
+      .cart-item{display:grid;grid-template-columns:48px minmax(0,1fr) 28px;gap:8px}.cart-item img,.cart-item .cover{width:48px;height:48px;object-fit:contain;background:white;border-radius:4px}.cart-item .cart-remove{padding:4px;font-size:20px;border:0;background:transparent;color:#757d78;align-self:start}.cart-price del{font-size:11px;color:#7f877f;margin-right:5px}.cart-price{font-size:12px}.cart-discount{font-size:11px;color:#3c7652}.cart-summary{border-top:1px solid #d6d9d2;padding-top:10px}.cart-summary p{display:flex;justify-content:space-between;gap:8px;font-size:12px}.cart-summary .cart-total{font-size:16px}.cart-status:empty{display:none}
       .action-status{font-size:13px;color:#254832}.action-status:empty{display:none}
-      @media(max-width:1000px){.layout{grid-template-columns:1fr}.cart{position:static;max-height:none;grid-row:1}.cart-items{max-height:220px}}
-      @media(max-width:700px){.panel{padding:16px}.controls{grid-template-columns:1fr 1fr}.record{grid-template-columns:minmax(0,1fr) 75px;gap:8px}.badge{grid-column:2}.product{grid-row:span 2;gap:10px}img,.cover{width:48px;height:48px}}
+      @media(max-width:1487px){:host{width:min(1120px,calc(100vw - 32px));margin-left:calc(50% - min(560px,50vw - 16px))}.layout{grid-template-columns:1fr}.cart{position:static;max-height:none}.cart-items{max-height:220px}}
+      @media(max-width:700px){.panel{padding:14px}.controls{grid-template-columns:1fr 1fr}.controls label:first-child{grid-column:1/-1}.record{grid-template-columns:minmax(0,1fr) 75px;gap:8px}.record>.badge{grid-column:1;text-align:left;justify-self:start}.item-actions{grid-column:2}.product{gap:10px}.view-modes{margin-left:0}.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tiles .record{padding:8px}.tiles .product img,.tiles .cover{height:110px}}
     `);
     const panel = element('div', null, {class: 'panel'});
-    panel.append(element('p', 'TURNTABLE LAB / YOUR COLLECTION', {class:'eyebrow'}), element('h2', 'Better wishlist'), element('p', 'Less scrolling. More records.'));
+    panel.append(element('p', 'BETTER GROWAVE', {class:'eyebrow'}), element('h2', 'Your wishlist'));
+    if(location.hostname!=='www.turntablelab.com')panel.append(element('p','Experimental support on this store.',{class:'note'}));
     const controls = element('div', null, {class:'controls'});
     ui = {currency: 'USD'};
     try { ui.currency = JSON.parse(document.getElementById('gw-additional-info')?.textContent || '{}').FEATURES?.currencyIsoCode || 'USD'; } catch {}
@@ -256,19 +262,24 @@
       label.append(control); controls.append(label); ui[key] = control;
       control.addEventListener(options ? 'change' : 'input', () => {
         prefs[key] = control.value; render();
-        extension?.storage?.local.set({ttlPreferences: {stock:prefs.stock, sort:prefs.sort}}).catch(() => {});
+        savePreferences();
       });
     }
     field('search', 'Search');
     field('stock', 'Availability', [['in','In stock'],['all','Everything'],['out','Out of stock'],['preorder','Preorders'],['unknown','Unknown']]);
     field('sort', 'Sort by', [['title','Title A–Z'],['title-desc','Title Z–A'],['price','Price low–high'],['price-desc','Price high–low'],['original','Original list order']]);
-    field('type', 'Product type', [['','All types']]);
     panel.append(controls);
     const actions = element('div', null, {class:'actions'});
     ui.load = element('button', 'Load all / retry', {type:'button'}); ui.load.onclick = loadAll;
     ui.pause = element('button', 'Pause loading', {type:'button'}); ui.pause.onclick = () => { stopped = true; };
     ui.refresh = element('button', 'Refresh stock', {type:'button'}); ui.refresh.onclick = () => { cache.clear(); for (const item of items.values()) {item.checked=false;item.status='unknown';} pump(); render(); };
-    actions.append(ui.load, ui.pause, ui.refresh); panel.append(actions);
+    ui.modes={};const modes=element('div',null,{class:'view-modes','aria-label':'View'});
+    function savePreferences(){extension?.storage?.local.set({ttlPreferences:{stock:prefs.stock,sort:prefs.sort,layout:prefs.layout}}).catch(()=>{});}
+    for(const [mode,label] of [['list','List'],['tiles','Tiles']]){
+      const button=element('button',label,{type:'button','aria-pressed':String(mode===prefs.layout)});
+      button.onclick=()=>{prefs.layout=mode;savePreferences();render();};ui.modes[mode]=button;modes.append(button);
+    }
+    actions.append(ui.load, ui.pause, ui.refresh,modes); panel.append(actions);
     ui.status = element('p', '', {class:'status', role:'status', 'aria-live':'polite'});
     ui.actionStatus=element('p','',{class:'action-status',role:'status','aria-live':'polite'});
     ui.count = element('p', '', {class:'count'}); ui.list = element('ul'); ui.empty = element('p', '', {class:'empty'});
@@ -279,11 +290,12 @@
     toggle.onchange = () => { host.style.display = toggle.checked ? previousDisplay : 'none'; };
     panel.append(original);
     const layout=element('div',null,{class:'layout'});
-    cart=globalThis.TTLCart({element,money:(amount,currency)=>new Intl.NumberFormat('en-US',{style:'currency',currency:currency||ui.currency}).format(amount/100),changed:render});
+    cart=globalThis.TTLCart({element,safeImage,getProduct,money:(amount,currency)=>new Intl.NumberFormat('en-US',{style:'currency',currency:currency||ui.currency}).format(amount/100),changed:render});
     layout.append(panel,cart.element);view.append(style,layout);
     try {
       const saved = (await extension?.storage?.local.get('ttlPreferences'))?.ttlPreferences;
       if (saved) for (const key of ['stock','sort']) if ([...ui[key].options].some(o=>o.value===saved[key])) { prefs[key]=saved[key];ui[key].value=saved[key]; }
+      if(['list','tiles'].includes(saved?.layout))prefs.layout=saved.layout;
     } catch {}
     render();
     let scheduled;

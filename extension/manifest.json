@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Better Growave",
-  "version": "0.2.0",
-  "description": "An unofficial wishlist upgrade for Turntable Lab: stock filters, search, sorting, item actions, and a sticky cart.",
+  "version": "0.3.0",
+  "description": "Compact Growave wishlists with stock filters, list/tile views, and a cart sidebar. Tested on Turntable Lab; other stores are experimental.",
   "homepage_url": "https://github.com/mweint/better-growave",
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab", "scripting"],
+  "action": {"default_title": "Improve this Growave wishlist"},
+  "background": {"scripts": ["background.js"]},
   "content_scripts": [{
     "matches": ["https://www.turntablelab.com/pages/wishlist*"],
     "js": ["core.js", "cart.js", "content.js"],

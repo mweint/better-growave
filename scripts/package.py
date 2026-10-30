@@ -7,8 +7,8 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 root = Path(__file__).resolve().parents[1]
 source = root / "extension"
 manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8-sig"))
-files = ["manifest.json", "core.js", "cart.js", "content.js"]
-assert set(manifest["content_scripts"][0]["js"]) == set(files[1:])
+files = ["manifest.json", "core.js", "cart.js", "content.js", "background.js"]
+assert set(manifest["content_scripts"][0]["js"]) == set(files[1:4])
 destination = root / "dist" / f"better-growave-{manifest['version']}.zip"
 destination.parent.mkdir(exist_ok=True)
 with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
