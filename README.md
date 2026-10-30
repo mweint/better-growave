@@ -6,8 +6,8 @@ An unofficial Firefox extension that makes Growave wishlists easier to browse an
 
 ## Features
 
-- Full-width browsing with the cart beside it on wide screens; the cart stacks below on smaller screens.
-- Remembered compact list and tile views. A filled heart removes a saved item; × removes a cart line.
+- Centered, bounded browsing with an approximately 840px wishlist and 296px cart sidebar on desktop; the cart stacks below on smaller screens.
+- Remembered compact list and three-column tile views with aligned titles, prices, and actions. Loading and refresh controls live under **Manage**. A filled heart removes a saved item; × removes a cart line.
 - No raw internal product-type filter.
 - Up to six concurrent stock checks and batched display updates. Pagination stays sequential because Growave advances its own offset, with unnecessary per-page pauses removed.
 - Store-reported sale prices, named item/cart discounts, and authoritative cart totals; no assumed or invented promotional eligibility.
@@ -20,7 +20,7 @@ An unofficial Firefox extension that makes Growave wishlists easier to browse an
 - Shows cart thumbnails, quantities, sale prices, discounts, and total in a desktop sidebar that stays visible while scrolling. On narrower screens it sits below the full-width list instead of squeezing it.
 - Refreshes the cart after additions, when the window regains focus, and every 30 seconds while the page is visible.
 
-The original wishlist stays available below the enhanced view. Use it to change lists, then choose **Load all / retry** again. Adding to cart does not remove an item from the wishlist.
+The original wishlist stays available below the enhanced view. Use it to change lists, then choose **Manage → Load all / retry** again. Adding to cart does not remove an item from the wishlist.
 
 ## Try it in Firefox
 
@@ -35,7 +35,7 @@ For an update, replace your extracted copy, remove the old temporary add-on, loa
 
 GitHub hosts the project; **Mozilla must still sign the extension** for normal permanent Firefox installation. See [PUBLISHING.md](PUBLISHING.md) for the short upload procedure. A GitHub source ZIP is not the Mozilla upload package because it has an extra top-level folder.
 
-Every successful [GitHub Actions build](https://github.com/mweint/better-growave/actions) produces a **better-growave-firefox-upload** artifact. Extract that artifact and submit the inner `better-growave-0.3.0.zip` to Mozilla. The inner ZIP has `manifest.json` at its root.
+Every successful [GitHub Actions build](https://github.com/mweint/better-growave/actions) produces a **better-growave-firefox-upload** artifact. Extract that artifact and submit the inner `better-growave-0.3.1.zip` to Mozilla. The inner ZIP has `manifest.json` at its root.
 
 ## Development
 
@@ -49,7 +49,7 @@ npm test
 npm run build
 ```
 
-The distributable is `dist/better-growave-0.3.0.zip`, with a SHA-256 file beside it. The build only packages the five files in `extension/`; it does not bundle dependencies or fetch remote code. It normalizes line endings and timestamps for reproducible ZIPs.
+The distributable is `dist/better-growave-0.3.1.zip`, with a SHA-256 file beside it. The build only packages the five files in `extension/`; it does not bundle dependencies or fetch remote code. It normalizes line endings and timestamps for reproducible ZIPs.
 
 Tests use mocked store responses and DOM fixtures built from the observed Growave structures. They never touch a real user's cart or wishlist. If using an already-installed Chromium browser, set `PLAYWRIGHT_EXECUTABLE_PATH` to that executable; otherwise tests use Playwright's bundled Chromium. Screenshots go to `test-results/`.
 
@@ -59,7 +59,7 @@ Availability is Shopify's purchasability flag for the saved variant, not a wareh
 
 Automatic loading covers the currently displayed list(s), not tabs that have not been opened. Duplicate appearances of the same variant are grouped; **Remove from wishlist** removes the first matching displayed entry and reports if another remains. No batch deletion is performed. If a site confirmation is needed, use the original wishlist; the extension does not guess which dialog button to press.
 
-The initial browsing version was reported working on the user's Turntable Lab wishlist. Version 0.3.0's cart/removal actions have passed isolated browser tests, but still need live-account verification. Native theme cart badges may not immediately reflect additions; the extension's cart preview and the actual cart page use the store's cart data.
+The initial browsing version was reported working on the user's Turntable Lab wishlist. Version 0.3.1's cart/removal actions have passed isolated browser tests, but still need live-account verification. Native theme cart badges may not immediately reflect additions; the extension's cart preview and the actual cart page use the store's cart data.
 
 ## Privacy
 

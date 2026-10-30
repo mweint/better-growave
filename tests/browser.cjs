@@ -42,8 +42,8 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
      productActive++;peakProductActive=Math.max(peakProductActive,productActive);await new Promise(r=>setTimeout(r,180));productActive--;
      const name=u.pathname.split('/').pop().slice(0,-3);
      if(name==='failed') return route.fulfill({status:503,body:'Unavailable'});
-     const data={alpha:{title:'Alice Coltrane: Journey in Satchidananda',id:1,price:3295,available:true},beta:{title:'Björk: Homogenic',id:2,price:2895,available:false},gamma:{title:'Floating Points: Cascade (Pre-Order)',id:3,price:3495,available:true},delta:{title:'Nala Sinephro: Endlessness',id:4,price:2695,available:true}}[name];
-     return route.fulfill({json:{title:data.title,type:'_music-ROCK-nonsense',featured_image:'/cover.svg',available:data.available,variants:[{id:data.id,title:'Default Title',price:data.price,compare_at_price:data.id===1?3995:null,available:data.available}],tags:[]}});
+     const data={alpha:{title:'Alice Coltrane: Journey in Satchidananda',id:1,price:3295,available:true},beta:{title:'Björk: Homogenic',id:2,price:2895,available:false},gamma:{title:'Floating Points: Cascade (Pre-Order)',id:3,price:3495,available:true},delta:{title:'Nala Sinephro: Endlessness (Limited Edition, Gatefold) Vinyl 2LP',id:4,price:2695,available:true}}[name];
+     return route.fulfill({json:{title:data.title,type:'_music-ROCK-nonsense',featured_image:'/cover.svg',available:data.available,variants:[{id:data.id,title:data.id===1?'Vinyl 2LP':'Default Title',price:data.price,compare_at_price:data.id===1?3995:null,available:data.available}],tags:[]}});
    }
    return route.fulfill({contentType:'text/html',body:'<!doctype html><html><body style="margin:24px;background:#fff"><main style="max-width:760px;margin:auto"><div class="gw-wl-page-placeholder"></div></main></body></html>'});
  });
@@ -72,7 +72,9 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await selects.nth(1).selectOption('price');assert.match(await panel.locator('.record').first().innerText(),/Nala/);
  await panel.locator('input[type=search]').fill('alice journey');assert.equal(await panel.locator('.record').count(),1);
  await panel.locator('input[type=search]').fill('');
+ await panel.locator('.manage summary').click();
  await panel.getByRole('button',{name:'Refresh stock'}).click();
+ await panel.locator('.manage summary').click();
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.status').textContent.includes('Stock checked: 5/5'));
  assert.equal(requests,10,'Refresh must request each product again');
  assert.ok(peakProductActive>=4 && peakProductActive<=6,'Stock checks overlap with a bounded pool');
@@ -97,13 +99,21 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  assert.match(await panel.locator('.cart-summary').innerText(),/10% off eligible records/);
  assert.match(await panel.locator('.cart-price').innerText(),/32.95/,'Line price stays independent of cart-level discount');
  const browseWidth=(await panel.locator('.panel').boundingBox()).width;
- assert.ok(browseWidth>=1119,'Sidebar does not consume the original 1120px browsing area');
+ assert.ok(browseWidth>=800 && browseWidth<=841,'Browsing column remains readable without spanning the screen');
+ assert.ok((await panel.boundingBox()).width<=1161,'Centered layout has a bounded total width');
  const firstRow=panel.locator('.record').first();
  const productBox=await firstRow.locator('.product').boundingBox(),actionBox=await firstRow.locator('.item-actions').boundingBox();
  assert.ok(Math.abs((productBox.y+productBox.height/2)-(actionBox.y+actionBox.height/2))<2,'Desktop row actions stay on one line');
  await panel.getByRole('button',{name:'Tiles',exact:true}).click();
  assert.equal(await panel.locator('.records').evaluate(el=>getComputedStyle(el).display),'grid');
  assert.equal(await page.evaluate(()=>savedPreferences.ttlPreferences.layout),'tiles');
+ const tileGeometry=await panel.locator('.record').evaluateAll(rows=>rows.map(row=>{
+   const box=selector=>{const b=row.querySelector(selector).getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height};};
+   return {card:row.getBoundingClientRect().toJSON(),price:box('.price'),add:box('.item-actions'),title:box('strong'),image:box('img,.cover')};
+ }));
+ assert.ok(tileGeometry.slice(0,3).every(g=>Math.abs(g.card.y-tileGeometry[0].card.y)<1),'Three tiles per desktop row');
+ for(const field of ['title','price','add'])assert.ok(Math.max(...tileGeometry.slice(0,3).map(g=>g[field].y))-Math.min(...tileGeometry.slice(0,3).map(g=>g[field].y))<2,`${field} aligns across varying title lengths`);
+ assert.ok(tileGeometry.every(g=>Math.abs(g.card.width-tileGeometry[0].card.width)<1),'All tiles retain the same width, including the last row');
  await page.screenshot({path:'test-results/tiles.png',fullPage:true});
  await panel.getByRole('button',{name:'List',exact:true}).click();
  // Growave V1 removal uses the original item button, never a fabricated API.
@@ -146,7 +156,9 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
    r.querySelector('button').onclick=()=>{r.querySelector('ul').insertAdjacentHTML('beforeend','<li class="gw-wl-product-card"><a class="gw-wl-product-card__title-link" href="/products/beta?variant=2">Björk</a></li>');r.querySelector('button').remove();};
  });
  await page.waitForTimeout(1200);
+ await panel.locator('.manage summary').click();
  await panel.getByRole('button',{name:'Load all / retry'}).click();
+ await panel.locator('.manage summary').click();
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.status').textContent.includes('All displayed'));
  assert.equal(await panel.locator('.record').count(),2,'V2 cards and pagination');
  await page.evaluate(()=>{
@@ -172,3 +184,5 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  console.log('PASS: filtering, pagination, stock refresh, both Growave removal layouts, variant-specific cart add, duplicate-click guard, rejected add, cart subtotal, sticky sidebar, mobile width, and browser errors.');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});
+
+

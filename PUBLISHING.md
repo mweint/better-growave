@@ -6,7 +6,7 @@ GitHub is the source repository. Mozilla Add-ons (AMO) is the separate signing a
 
 1. Open the repository's **Actions** tab and select a successful **Test and package** run.
 2. Download **better-growave-firefox-upload** from its artifacts.
-3. Extract that artifact. The file to submit is **better-growave-0.3.0.zip**, not the artifact's outer ZIP or GitHub's source-code ZIP.
+3. Extract that artifact. The file to submit is **better-growave-0.3.1.zip**, not the artifact's outer ZIP or GitHub's source-code ZIP.
 
 Alternatively run `npm ci`, `npm run lint`, `npm test`, and `npm run build` locally. The upload ZIP will be in `dist/`.
 
