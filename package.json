@@ -1,0 +1,15 @@
+{
+  "name": "better-growave",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Unofficial Growave wishlist improvements, initially for Turntable Lab.",
+  "scripts": {
+    "lint": "web-ext lint --source-dir extension --warnings-as-errors",
+    "test": "node tests/browser.cjs",
+    "build": "python scripts/package.py"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "web-ext": "10.8.0"
+  }
+}
