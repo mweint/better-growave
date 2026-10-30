@@ -11,7 +11,9 @@
   let host, view, ui, running = false, stopped = false, active = 0, timer, lastSignature = '', lastRoots = [];
   let loadMessage = 'Waiting for your wishlist…', complete = false, emptySince = 0;
   let prefs = {stock: 'in', sort: 'title', search: '', layout: 'list'};
-  let renderTimer;
+  let renderTimer, draggedKey=null;
+  let customOrder=[];
+  const orderStorageKey=`ttlOrder:${location.origin}`;
   const scheduleRender = () => { if (!renderTimer) renderTimer=setTimeout(()=>{renderTimer=null;render();},100); };
   const extension = globalThis.browser || globalThis.chrome;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -116,7 +118,7 @@
   }
   function pump() {
     for (const [key, item] of items) {
-      if (active >= 6) break;
+      if (active >= 8) break;
       if (item.checked || item.pending) continue;
       active++; item.pending = true;
       getProduct(item.url).then(product => {
@@ -139,7 +141,7 @@
         scan();
         const buttons = loaders();
         if (!buttons.length) {
-          if (++emptyPasses < (items.size ? 4 : 30)) { loadMessage = items.size ? 'Checking for more items…' : 'Waiting for your saved items…'; render(); await sleep(1000); continue; }
+          if (++emptyPasses < (items.size ? 3 : 30)) { loadMessage = items.size ? 'Checking for more items…' : 'Waiting for your saved items…'; render(); await sleep(items.size ? 250 : 1000); continue; }
           complete = items.size > 0;
           loadMessage = complete ? 'All displayed wishlists loaded.' : 'No items found. Sign in or open a saved list in the original wishlist below.';
           break;
@@ -173,23 +175,43 @@
     for (const option of ui.stock.options) option.textContent = option.value === 'all' ? `Everything (${list.length})` : `${labels[option.value]} (${counts[option.value]})`;
     ui.list.className = prefs.layout === 'tiles' ? 'records tiles' : 'records';
     for(const [mode,button] of Object.entries(ui.modes))button.setAttribute('aria-pressed',String(mode===prefs.layout));
-    const filtered = core.select(list, prefs);
+    const filtered = core.select(list, prefs, customOrder);
+    ui.list.classList.toggle('reordering',prefs.sort==='manual' && prefs.layout==='list');
+    ui.orderHint.hidden=prefs.sort!=='manual';
+    ui.orderHint.textContent=prefs.layout==='tiles'?'Your saved order. Switch to List to rearrange.':'Drag the handles to arrange your list. Use ↑ / ↓ on a handle to move it with the keyboard.';
+    ui.list.classList.toggle('has-variants',filtered.some(i=>i.variantTitle && !i.title.toLocaleLowerCase().includes(i.variantTitle.toLocaleLowerCase())));
     const checked = list.filter(i => i.checked).length;
     ui.status.textContent = `${loadMessage} Stock checked: ${checked}/${list.length}.`;
     ui.actionStatus.textContent = actionMessage;
-    ui.count.textContent = `${filtered.length} shown · ${list.length} loaded${complete ? '' : ' so far'}`;
+    ui.count.textContent = `${filtered.length} shown · ${running ? 'Loading… ' : ''}${list.length} loaded${complete ? '' : ' so far'}`;
     ui.load.disabled = running; ui.pause.disabled = !running;
     ui.refresh.disabled = active > 0;
     const fragment = document.createDocumentFragment();
     for (const item of filtered) {
       const row = element('li', null, {class: 'record'});
+      if(prefs.sort==='manual' && prefs.layout==='list'){
+        const handle=element('button','⠿',{type:'button',class:'drag-handle',draggable:'true','aria-label':`Move ${item.title}`,title:'Drag to reorder, or use Up/Down arrow keys','data-key':item.key});
+        handle.ondragstart=event=>{draggedKey=item.key;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',item.key);row.classList.add('dragging');};
+        handle.ondragend=()=>{draggedKey=null;view.querySelectorAll('.drop-target,.dragging').forEach(el=>el.classList.remove('drop-target','dragging'));};
+        handle.onkeydown=event=>{
+          const index=filtered.findIndex(i=>i.key===item.key);
+          if(!['ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+          event.preventDefault();
+          const target=event.key==='Home'?filtered[0]:event.key==='End'?filtered.at(-1):filtered[index+(event.key==='ArrowUp'?-1:1)];
+          if(target && target.key!==item.key)moveItem(item.key,target.key,['ArrowDown','End'].includes(event.key));
+        };
+        row.ondragover=event=>{if(draggedKey && draggedKey!==item.key){event.preventDefault();event.dataTransfer.dropEffect='move';row.classList.add('drop-target');}};
+        row.ondragleave=()=>row.classList.remove('drop-target');
+        row.ondrop=event=>{event.preventDefault();if(draggedKey && draggedKey!==item.key){const box=row.getBoundingClientRect();moveItem(draggedKey,item.key,event.clientY>box.y+box.height/2);}draggedKey=null;};
+        row.append(handle);
+      }
       const link = element('a', null, {title:item.title, href: item.url, target: '_blank', rel: 'noopener noreferrer', class: 'product'});
       const image = safeImage(item.image);
       if (image) link.append(element('img', null, {src: image, alt: '', loading: 'lazy', width: '64', height: '64'}));
       else link.append(element('span', '♫', {class: 'cover'}));
       const name = element('span', null);
       name.append(element('strong', item.title));
-      if (item.variantTitle) name.append(element('small', item.variantTitle));
+      if (item.variantTitle && !item.title.toLocaleLowerCase().includes(item.variantTitle.toLocaleLowerCase())) name.append(element('small', item.variantTitle));
       link.append(name); row.append(link);
       const price=element('span',null,{class:'price'});
       const money=amount=>new Intl.NumberFormat('en-US',{style:'currency',currency:ui.currency}).format(amount/100);
@@ -213,6 +235,13 @@
     ui.empty.hidden = filtered.length !== 0;
     ui.empty.textContent = list.length ? 'No matches with these filters. Try Everything, or wait for stock checks to finish.' : 'Waiting for items from your original wishlist below.';
   }
+  function moveItem(key,target,after){
+    const order=[...new Set([...customOrder,...items.keys()])].filter(k=>k!==key);
+    const index=order.indexOf(target);if(index<0)return;
+    order.splice(index+(after?1:0),0,key);customOrder=order;
+    extension?.storage?.local.set({[orderStorageKey]:customOrder}).catch(()=>{actionMessage='Could not save your order. It will last only for this visit.';render();});
+    render();[...ui.list.querySelectorAll('.drag-handle')].find(el=>el.dataset.key===key)?.focus();
+  }
   async function mount(found) {
     host = found;
     const container = element('section', null, {id: 'ttl-better-wishlist', 'aria-label': 'Better wishlist'});
@@ -230,26 +259,29 @@
       button:disabled{opacity:.5;cursor:default}:focus-visible{outline:3px solid #b46722;outline-offset:3px}
       .toolbar{display:flex;align-items:center;gap:12px;margin:0 0 12px;position:relative}.count{font-size:12px;margin:0 auto 0 0;color:#58615a}
       .view-modes{display:flex;gap:2px;background:#f1f3f0;padding:3px;border-radius:6px}.view-modes button{border:0;background:transparent;color:#59645c;min-height:28px;padding:5px 9px}.view-modes [aria-pressed=true]{background:white;color:#202522;box-shadow:0 1px 3px #0002}
-      .manage summary{font-size:12px;color:#58615a;cursor:pointer;padding:8px 0}.manage-box{position:absolute;right:0;top:100%;z-index:3;width:min(320px,100%);padding:14px;border:1px solid #d6d9d2;border-radius:8px;background:white;box-shadow:0 6px 20px #0002}
-      .actions{display:flex;gap:6px;flex-wrap:wrap}.status{font-size:12px}.action-status{font-size:12px;color:#254832}.action-status:empty{display:none}
-      ul{list-style:none;margin:0;padding:0}.record{display:grid;grid-template-columns:minmax(0,1fr) 68px 76px 88px;gap:10px;align-items:center;padding:12px 0;border-top:1px solid #e6e8e3}
+      .menu-trigger{font-size:15px;letter-spacing:1px;width:34px;padding:4px;border-color:transparent;background:transparent;color:#58615a}.menu-trigger:hover,.menu-trigger[aria-expanded=true]{background:#f0f2ef}.manage-box{position:absolute;right:0;top:100%;z-index:3;width:min(244px,100%);padding:6px;border:1px solid #d6d9d2;border-radius:8px;background:white;box-shadow:0 6px 20px #0002}
+      .actions{display:grid;gap:2px}.actions button{border:0;text-align:left;background:transparent;font-weight:400;padding:9px 10px}.actions button:hover:not(:disabled),.actions button:focus-visible{background:#eef2ed}.status{font-size:11px;border-top:1px solid #e6e8e3;padding:10px 10px 4px;margin:4px 0 0}.action-status{font-size:12px;color:#254832}.action-status:empty{display:none}
+      ul{list-style:none;margin:0;padding:0}.record{display:grid;grid-template-columns:minmax(0,1fr) 68px 76px 88px;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #e6e8e3}
       .product{display:flex;gap:12px;align-items:center;color:inherit;text-decoration:none;min-width:0}.product>span{min-width:0}.product:hover strong{text-decoration:underline}
       img,.cover{width:52px;height:52px;object-fit:contain;border-radius:4px;flex-shrink:0;background:#fff}.cover{display:grid;place-items:center;font-size:24px}
       strong{font-size:13px;font-weight:600}small{display:block;margin-top:4px;color:#69716b;font-size:11px}.price{font-size:13px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.price del{display:block;color:#808781;font-size:11px}.sale{color:#a34232}
       .badge{font-size:11px;color:#69716b}.badge.in{color:#3b6b4c}.badge.preorder{color:#8b631b}
       .item-actions{display:flex;gap:4px;justify-content:flex-end;align-items:center}.item-actions button:not(.remove){background:#254832;color:white;border-color:#254832}.item-actions .remove{background:transparent;color:#9c424b;border:0;font-size:21px;line-height:1;padding:5px;width:34px;height:34px}.item-actions .remove:hover{background:#f4e6e8}.item-actions a{font-size:12px;color:#254832}
       .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-      .tiles .record{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto 18px 34px;gap:8px 6px;align-items:center;padding:12px;border:1px solid #e1e4df;border-radius:8px;background:white}
-      .tiles .product{grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:12px}
-      .tiles .product img,.tiles .cover{width:100%;height:156px;object-fit:contain;padding:4px 16px}
-      .tiles .product>span:not(.cover){height:60px}.tiles strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;line-height:20px;height:40px}.tiles small{margin-top:2px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .tiles .badge{grid-column:1/-1;grid-row:2}.tiles .price{grid-column:1;grid-row:3;text-align:left}.tiles .price del{display:inline;margin-right:5px;font-size:10px}.tiles .item-actions{grid-column:2;grid-row:3;margin:0;min-height:34px}.tiles .item-actions .remove{position:absolute;top:8px;right:8px;background:#fff;border-radius:50%;box-shadow:0 1px 4px #0001}.tiles .item-actions .remove:hover{background:#f4e6e8}
+      .tiles .record{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto 34px;gap:6px;align-items:center;padding:10px;border:1px solid #e1e4df;border-radius:8px;background:white}
+      .tiles .product{grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:8px}
+      .tiles .product img,.tiles .cover{width:100%;height:140px;object-fit:contain;padding:4px 16px}
+      .tiles .product>span:not(.cover){height:40px}.tiles .product small{display:none}.tiles.has-variants .product>span:not(.cover){height:56px}.tiles.has-variants .product small{display:block}.tiles strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;line-height:20px;height:40px}.tiles small{margin-top:2px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tiles .record>.badge{grid-area:auto;position:absolute;left:14px;top:118px;background:#fff;padding:2px 5px;border-radius:3px}.tiles .badge.in{display:none}.tiles .price{grid-column:1;grid-row:2;text-align:left}.tiles .price del{display:inline;margin-right:5px;font-size:10px}.tiles .item-actions{grid-column:2;grid-row:2;margin:0;min-height:34px}.tiles .item-actions .remove{position:absolute;top:8px;right:8px;background:#fff;border-radius:50%;box-shadow:0 1px 4px #0001}.tiles .item-actions .remove:hover{background:#f4e6e8}
       .note{font-size:11px;margin-top:14px}.empty{padding:24px 0}.original{display:flex;align-items:center;gap:8px;margin-top:12px;color:#69716b;font-weight:400}.original input{width:auto;margin:0}
-      .cart{position:sticky;top:100px;border:1px solid #e1e4df;border-radius:10px;background:#f7f8f5;padding:18px;max-height:calc(100vh - 120px);overflow:auto}
-      .cart h3{font-size:18px;margin:0 0 12px}.cart a{color:#254832}.cart-items{max-height:45vh;overflow:auto}.cart-item{display:grid;grid-template-columns:48px minmax(0,1fr) 24px;gap:8px;padding:12px 0;border-bottom:1px solid #e1e4df;overflow-wrap:anywhere}.cart-item a{font-weight:600;font-size:12px;text-decoration:none}.cart-item a:hover{text-decoration:underline}.cart-item img,.cart-item .cover{width:48px;height:48px;object-fit:contain;background:white;border-radius:4px}.cart-item .cart-remove{padding:2px;font-size:20px;border:0;background:transparent;color:#757d78;align-self:start;min-height:28px}
+      .cart{position:sticky;top:100px;border:1px solid #e1e4df;border-radius:10px;background:#f7f8f5;padding:18px;max-height:calc(100vh - 120px);display:flex;flex-direction:column;overflow:hidden}.cart>*{flex-shrink:0}
+      .cart h3{font-size:18px;margin:0 0 12px}.cart a{color:#254832}.cart-items{flex:1 1 auto;min-height:0;max-height:45vh;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;scrollbar-width:thin;padding-right:8px;overscroll-behavior:contain}.cart-item{display:grid;grid-template-columns:48px minmax(0,1fr) 24px;gap:8px;padding:12px 0;border-bottom:1px solid #e1e4df;overflow-wrap:anywhere}.cart-item a{font-weight:600;font-size:12px;text-decoration:none}.cart-item a:hover{text-decoration:underline}.cart-item img,.cart-item .cover{width:48px;height:48px;object-fit:contain;background:white;border-radius:4px}.cart-item .cart-remove{padding:2px;font-size:20px;border:0;background:transparent;color:#757d78;align-self:start;min-height:28px}
       .cart-price del{font-size:10px;color:#7f877f;margin-right:5px}.cart-price{font-size:12px}.cart-discount{font-size:11px;color:#3c7652}.cart-summary{border-top:1px solid #d6d9d2;padding-top:10px}.cart-summary p{display:flex;justify-content:space-between;gap:8px;font-size:12px}.cart-summary .cart-total{font-size:16px;font-weight:700;color:#202522}.cart-status{font-size:12px}.cart-status:empty{display:none}.cart-link{display:block;margin-top:12px;font-weight:600;font-size:13px}
-      @media(max-width:1050px){:host{width:min(840px,calc(100vw - 32px));margin-left:calc(50% - min(420px,50vw - 16px))}.layout{grid-template-columns:1fr}.cart{position:static;max-height:none}.cart-items{max-height:260px}}
-      @media(max-width:600px){.panel{padding:12px}.controls{grid-template-columns:1fr 1fr}.controls label:first-child{grid-column:1/-1}.record{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}.product{grid-column:1/-1;gap:10px}.record>.badge{grid-column:1;grid-row:2}.record>.price{grid-column:1;grid-row:3;text-align:left}.item-actions{grid-column:2;grid-row:3}.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tiles .record{padding:8px}.tiles .product img,.tiles .cover{height:118px;padding:4px 12px}.tiles .product>span:not(.cover){height:77px}.tiles strong{height:57px;line-height:19px;-webkit-line-clamp:3}.tiles .price del{display:block}.toolbar{gap:8px}.count{font-size:11px}.manage summary{font-size:11px}}
+      .select-wrap{display:block;position:relative}.select-wrap:after{content:'';position:absolute;right:14px;top:14px;width:6px;height:6px;border-right:1.5px solid #667369;border-bottom:1.5px solid #667369;transform:rotate(45deg);pointer-events:none}select{appearance:none;padding-right:36px;text-overflow:ellipsis}
+      .order-hint{font-size:11px;margin:0 0 10px;color:#69716b}.reordering .record{grid-template-columns:24px minmax(0,1fr) 68px 76px 88px}.drag-handle{border:0;background:transparent;color:#899289;padding:0;font-size:22px;cursor:grab;min-width:24px}.drag-handle:active{cursor:grabbing}.dragging{opacity:.45}.drop-target{box-shadow:inset 0 2px #55745f}
+      @media(max-width:600px){.reordering .record{grid-template-columns:24px minmax(0,1fr) auto}.reordering .drag-handle{grid-column:1;grid-row:1/4}.reordering .product{grid-column:2/-1}.reordering .record>.badge,.reordering .record>.price{grid-column:2}.reordering .item-actions{grid-column:3}}
+      @media(max-width:1050px){:host{width:min(840px,calc(100vw - 32px));margin-left:calc(50% - min(420px,50vw - 16px))}.layout{grid-template-columns:1fr}.cart{position:static;max-height:none}.cart-items{max-height:320px}}
+      @media(max-width:600px){.panel{padding:12px}.controls{grid-template-columns:1fr 1fr}.controls label:first-child{grid-column:1/-1}.record{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}.product{grid-column:1/-1;gap:10px}.record>.badge{grid-column:1;grid-row:2}.record>.price{grid-column:1;grid-row:3;text-align:left}.item-actions{grid-column:2;grid-row:3}.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tiles .record{padding:8px}.tiles .product img,.tiles .cover{height:118px;padding:4px 12px}.tiles .product>span:not(.cover){height:57px}.tiles.has-variants .product>span:not(.cover){height:73px}.tiles .record>.badge{top:96px}.tiles .record>.price{grid-row:2}.tiles strong{height:57px;line-height:19px;-webkit-line-clamp:3}.tiles .price del{display:block}.toolbar{gap:8px}.count{font-size:11px}}
     `);
     const panel = element('div', null, {class: 'panel'});
     panel.append(element('p', 'BETTER GROWAVE', {class:'eyebrow'}), element('h2', 'Your wishlist'));
@@ -262,7 +294,7 @@
       const label = element('label', title), control = element(options ? 'select' : 'input', null);
       if (!options) { control.type = 'search'; control.placeholder = 'Artist, album, or title'; }
       else for (const [value, text] of options) control.append(element('option', text, {value}));
-      label.append(control); controls.append(label); ui[key] = control;
+      if(options){const wrap=element('span',null,{class:'select-wrap'});wrap.append(control);label.append(wrap);}else label.append(control); controls.append(label); ui[key] = control;
       control.addEventListener(options ? 'change' : 'input', () => {
         prefs[key] = control.value; render();
         savePreferences();
@@ -270,7 +302,7 @@
     }
     field('search', 'Search');
     field('stock', 'Availability', [['in','In stock'],['all','Everything'],['out','Out of stock'],['preorder','Preorders'],['unknown','Unknown']]);
-    field('sort', 'Sort by', [['title','Title A–Z'],['title-desc','Title Z–A'],['price','Price low–high'],['price-desc','Price high–low'],['original','Original list order']]);
+    field('sort', 'Sort by', [['title','Title A–Z'],['title-desc','Title Z–A'],['price','Price low–high'],['price-desc','Price high–low'],['original','Original list order'],['manual','My order']]);
     panel.append(controls);
     const actions = element('div', null, {class:'actions'});
     ui.load = element('button', 'Load all / retry', {type:'button'}); ui.load.onclick = loadAll;
@@ -286,20 +318,45 @@
     ui.status = element('p', '', {class:'status', role:'status', 'aria-live':'polite'});
     ui.actionStatus=element('p','',{class:'action-status',role:'status','aria-live':'polite'});
     ui.count = element('p', '', {class:'count'}); ui.list = element('ul'); ui.empty = element('p', '', {class:'empty'});
-    const manage=element('details',null,{class:'manage'}), manageBox=element('div',null,{class:'manage-box'});
-    manageBox.append(actions,ui.status);manage.append(element('summary','Manage'),manageBox);
+    const manage=element('div',null,{class:'manage'}), manageBox=element('div',null,{class:'manage-box',id:'wishlist-options',hidden:''});
+    const trigger=element('button','•••',{type:'button',class:'menu-trigger','aria-label':'Wishlist options',title:'Wishlist options','aria-expanded':'false','aria-controls':'wishlist-options','aria-haspopup':'menu'});
+    actions.setAttribute('role','menu');actions.setAttribute('aria-label','Wishlist options');
+    const enabledActions=()=>[...actions.querySelectorAll('button:not(:disabled)')];
+    function closeMenu(focus=false){manageBox.hidden=true;trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();}
+    function openMenu(last=false){manageBox.hidden=false;trigger.setAttribute('aria-expanded','true');const buttons=enabledActions();(last?buttons.at(-1):buttons[0])?.focus();}
+    trigger.onclick=()=>manageBox.hidden?openMenu():closeMenu();
+    trigger.onkeydown=event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();openMenu(event.key==='ArrowUp');}};
+    for(const button of [ui.load,ui.pause,ui.refresh]){
+      button.setAttribute('role','menuitem');button.tabIndex=-1;
+      button.addEventListener('click',()=>closeMenu(true));
+    }
+    manage.onkeydown=event=>{
+      if(event.key==='Tab'){closeMenu(true);return;}
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMenu(true);}
+      if(manageBox.hidden || !['ArrowDown','ArrowUp','Home','End'].includes(event.key) || event.target===trigger)return;
+      event.preventDefault();const buttons=enabledActions(),index=buttons.indexOf(view.activeElement);
+      const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowUp'?-1:1)+buttons.length)%buttons.length;
+      buttons[next]?.focus();
+    };
+    const dismiss=event=>{if(!event.composedPath().includes(manage))closeMenu();};
+    document.addEventListener('pointerdown',dismiss,true);document.addEventListener('focusin',dismiss,true);
+    manageBox.append(actions,ui.status);manage.append(trigger,manageBox);
     const toolbar=element('div',null,{class:'toolbar'});toolbar.append(ui.count,modes,manage);
-    panel.append(toolbar,ui.actionStatus,ui.list,ui.empty);
+    ui.orderHint=element('p','Drag the handles to arrange your list. Use ↑ / ↓ on a handle to move it with the keyboard.',{class:'order-hint',hidden:''});
+    panel.append(toolbar,ui.orderHint,ui.actionStatus,ui.list,ui.empty);
     const original = element('label', 'Show original wishlist', {class:'original'}), toggle=element('input',null,{type:'checkbox'});
-    toggle.checked = true; original.prepend(toggle);
+    toggle.checked = false; original.prepend(toggle);
     const previousDisplay = host.style.display;
+    host.style.display='none';
     toggle.onchange = () => { host.style.display = toggle.checked ? previousDisplay : 'none'; };
     panel.append(original);
     const layout=element('div',null,{class:'layout'});
     cart=globalThis.TTLCart({element,safeImage,getProduct,money:(amount,currency)=>new Intl.NumberFormat('en-US',{style:'currency',currency:currency||ui.currency}).format(amount/100),changed:render});
     layout.append(panel,cart.element);view.append(style,layout);
     try {
-      const saved = (await extension?.storage?.local.get('ttlPreferences'))?.ttlPreferences;
+      const stored = await extension?.storage?.local.get(['ttlPreferences',orderStorageKey]);
+      const saved=stored?.ttlPreferences;
+      if(Array.isArray(stored?.[orderStorageKey]))customOrder=[...new Set(stored[orderStorageKey].filter(key=>typeof key==='string' && core.productURL(key,location.href)))];
       if (saved) for (const key of ['stock','sort']) if ([...ui[key].options].some(o=>o.value===saved[key])) { prefs[key]=saved[key];ui[key].value=saved[key]; }
       if(['list','tiles'].includes(saved?.layout))prefs.layout=saved.layout;
     } catch {}
@@ -307,9 +364,10 @@
     let scheduled;
     const observer = new MutationObserver(() => {clearTimeout(scheduled); scheduled=setTimeout(scan,200);});
     timer = setInterval(() => {
-      if (!host.isConnected) {clearInterval(timer);observer.disconnect();cart.destroy();container.remove();return;}
+      if (!host.isConnected) {clearInterval(timer);observer.disconnect();cart.destroy();document.removeEventListener('pointerdown',dismiss,true);document.removeEventListener('focusin',dismiss,true);container.remove();return;}
       for (const root of roots(host)) if (!lastRoots.includes(root)) {observer.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['href','data-gw-variant-id']});lastRoots.push(root);}
       scan();
+      if(complete && !running && loaders().length)loadAll();
     },1000);
     scan(); loadAll();
   }
@@ -320,5 +378,3 @@
     else if (++tries >= 60) clearInterval(wait);
   },500);
 })();
-
-

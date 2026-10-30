@@ -6,7 +6,7 @@ GitHub is the source repository. Mozilla Add-ons (AMO) is the separate signing a
 
 1. Open the repository's **Actions** tab and select a successful **Test and package** run.
 2. Download **better-growave-firefox-upload** from its artifacts.
-3. Extract that artifact. The file to submit is **better-growave-0.3.1.zip**, not the artifact's outer ZIP or GitHub's source-code ZIP.
+3. Extract that artifact. The file to submit is **better-growave-0.3.2.zip**, not the artifact's outer ZIP or GitHub's source-code ZIP.
 
 Alternatively run `npm ci`, `npm run lint`, `npm test`, and `npm run build` locally. The upload ZIP will be in `dist/`.
 
@@ -34,7 +34,7 @@ The public listing is associated with an AMO developer profile. You can choose a
 
 **Support / source:** https://github.com/mweint/better-growave
 
-**Reviewer notes:** Requires a Turntable Lab account with saved wishlist items to exercise the live widget. No paid account with the extension developer is required. Content scripts run automatically on `https://www.turntablelab.com/pages/wishlist*`; the toolbar can activate them on another supported HTTPS Growave wishlist. The `storage` permission saves filter/sort/view preferences only. `activeTab` and `scripting` allow explicit toolbar activation on another supported HTTPS Growave wishlist without blanket host access. Cart additions use same-origin Shopify Ajax requests; wishlist removal delegates to the exact original Growave item control. The code does not contain remote executable scripts or credentials. The repository includes mocked browser tests. Do not submit a real user's login or session data in reviewer notes; arrange a dedicated test account if reviewers require one.
+**Reviewer notes:** Requires a Turntable Lab account with saved wishlist items to exercise the live widget. No paid account with the extension developer is required. Content scripts run automatically on `https://www.turntablelab.com/pages/wishlist*`; the toolbar can activate them on another supported HTTPS Growave wishlist. The `storage` permission saves filter/sort/view preferences and a custom product URL order per store. `activeTab` and `scripting` allow explicit toolbar activation on another supported HTTPS Growave wishlist without blanket host access. Cart additions use same-origin Shopify Ajax requests; wishlist removal delegates to the exact original Growave item control. The code does not contain remote executable scripts or credentials. The repository includes mocked browser tests. Do not submit a real user's login or session data in reviewer notes; arrange a dedicated test account if reviewers require one.
 
 ## Updates
 

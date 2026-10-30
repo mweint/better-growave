@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Better Growave",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Compact Growave wishlists with stock filters, list/tile views, and a cart sidebar. Tested on Turntable Lab; other stores are experimental.",
   "homepage_url": "https://github.com/mweint/better-growave",
   "permissions": ["storage", "activeTab", "scripting"],

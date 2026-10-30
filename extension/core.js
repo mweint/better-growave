@@ -27,11 +27,13 @@ globalThis.TTLWishlist = (() => {
       status: available === false ? 'out' : available === true ? (preorder ? 'preorder' : 'in') : 'unknown',
       checked: true};
   }
-  function select(items, {search = '', stock = 'in', sort = 'title'}) {
+  function select(items, {search = '', stock = 'in', sort = 'title'}, customOrder = []) {
     const words = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const result = items.filter(i => (stock === 'all' || i.status === stock) &&
       words.every(w => `${i.title} ${i.variantTitle || ''}`.toLocaleLowerCase().includes(w)));
+    const ranks=new Map(customOrder.map((key,index)=>[key,index]));
     result.sort((a, b) => {
+      if(sort==='manual')return (ranks.get(a.key)??Infinity)-(ranks.get(b.key)??Infinity) || a.order-b.order;
       if (sort === 'original') return a.order - b.order;
       if (sort === 'price' || sort === 'price-desc') {
         if (a.price == null) return b.price == null ? a.order - b.order : 1;

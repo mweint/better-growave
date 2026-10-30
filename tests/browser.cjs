@@ -1,5 +1,6 @@
 require('node:fs').mkdirSync('test-results',{recursive:true});
-const { chromium } = require('playwright');
+const { chromium, firefox } = require('playwright');
+const testBrowser=process.env.TEST_BROWSER==='firefox'?firefox:chromium;
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const core = require('../extension/core.js');
@@ -11,7 +12,7 @@ assert.equal(core.enrich({variant:'2'}, {available:true, variants:[{id:2,availab
 assert.equal(core.enrich({variant:'2'}, {title:'Record (Pre-Order)',variants:[{id:2,available:true}]}).status,'preorder');
 assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:'B',price:100,status:'in',order:1}],{sort:'price-desc'}).map(i=>i.title),['B','A']);
 (async()=>{
- const browser = await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
+ const browser = await testBrowser.launch({headless:true,executablePath:process.env.TEST_BROWSER==='firefox'?undefined:process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
  const page = await browser.newPage({viewport:{width:1600,height:960}});
  const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('PAGE ERROR',e.message)});
  let requests=0, adds=0, rejectAdd=false, cartRemoves=0, rejectRemove=false, productActive=0, peakProductActive=0;
@@ -49,7 +50,7 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  });
  await page.goto(base);
  await page.evaluate(()=>{
-   window.savedPreferences={};window.browser={storage:{local:{get:async()=>window.savedPreferences,set:async value=>{window.savedPreferences=value;}}}};
+   window.savedPreferences={};window.browser={storage:{local:{get:async()=>window.savedPreferences,set:async value=>{Object.assign(window.savedPreferences,value);}}}};
    const root=document.querySelector('.gw-wl-page-placeholder').attachShadow({mode:'open'});
    window.card=(name,id)=>`<li class="gw-wl-page-item" data-gw-selector="wishlist-item" data-gw-variant-id="${id}"><a class="gw-wl-page-item__title" href="/products/${name}?variant=${id}">${name}</a></li>`;
    root.innerHTML=`<ul>${card('alpha',1)}${card('beta',2)}</ul><button class="gw-wl-page-load-more">Load more</button>`;
@@ -64,6 +65,18 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.status').textContent.includes('All displayed'));
  const selects=panel.locator('select');
  assert.equal(await selects.count(),2,'No internal product-type filter');
+ assert.equal(await page.locator('.gw-wl-page-placeholder').isVisible(),false,'Original wishlist hidden by default');
+ await panel.getByLabel('Show original wishlist').check();
+ assert.equal(await page.locator('.gw-wl-page-placeholder').isVisible(),true);
+ await panel.getByLabel('Show original wishlist').uncheck();
+ const options=panel.getByRole('button',{name:'Wishlist options',exact:true});
+ await options.click();assert.equal(await panel.locator('.manage-box').isVisible(),true);
+ await panel.locator('h2').click();assert.equal(await panel.locator('.manage-box').isVisible(),false,'Click inside shadow root but outside menu closes it');
+ await options.click();await page.mouse.click(10,10);assert.equal(await panel.locator('.manage-box').isVisible(),false,'Click outside extension closes it');
+ await options.press('ArrowDown');await page.keyboard.press('Escape');
+ assert.equal(await options.evaluate(el=>el.getRootNode().activeElement===el),true,'Escape restores focus');
+ await options.click();await page.keyboard.press('Tab');assert.equal(await panel.locator('.manage-box').isVisible(),false,'Tab closes menu');
+ assert.ok(await selects.first().evaluate(el=>parseFloat(getComputedStyle(el).paddingRight)>=32),'Select text leaves room for arrow');
  await selects.nth(0).selectOption('out'); assert.equal(await panel.locator('.record').count(),1);
  assert.match(await panel.locator('.record').innerText(),/Björk/);
  await selects.nth(0).selectOption('preorder');assert.equal(await panel.locator('.record').count(),1);
@@ -72,12 +85,23 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await selects.nth(1).selectOption('price');assert.match(await panel.locator('.record').first().innerText(),/Nala/);
  await panel.locator('input[type=search]').fill('alice journey');assert.equal(await panel.locator('.record').count(),1);
  await panel.locator('input[type=search]').fill('');
- await panel.locator('.manage summary').click();
- await panel.getByRole('button',{name:'Refresh stock'}).click();
- await panel.locator('.manage summary').click();
+ await panel.getByRole('button',{name:'Wishlist options',exact:true}).click();
+ await panel.getByRole('menuitem',{name:'Refresh stock'}).click();
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.status').textContent.includes('Stock checked: 5/5'));
  assert.equal(requests,10,'Refresh must request each product again');
- assert.ok(peakProductActive>=4 && peakProductActive<=6,'Stock checks overlap with a bounded pool');
+ assert.ok(peakProductActive>=4 && peakProductActive<=8,'Stock checks overlap with a bounded pool');
+ await selects.nth(1).selectOption('title');
+ await selects.nth(1).selectOption('manual');
+ const firstKey=await panel.locator('.drag-handle').first().getAttribute('data-key');
+ await panel.locator('.drag-handle').first().press('ArrowDown');
+ assert.equal(await panel.locator('.drag-handle').nth(1).getAttribute('data-key'),firstKey,'Keyboard moves item');
+ const savedOrder=await page.evaluate(()=>savedPreferences['ttlOrder:'+location.origin]);
+ assert.ok(savedOrder.length===5,'Order saved locally');
+ await panel.getByRole('button',{name:'Tiles',exact:true}).click();
+ assert.equal(await panel.locator('.record .product').nth(1).getAttribute('href'),firstKey,'Tiles use custom order');
+ await panel.getByRole('button',{name:'List',exact:true}).click();
+ await panel.locator('.drag-handle').nth(1).dragTo(panel.locator('.record').nth(3));
+ assert.notEqual(await panel.locator('.drag-handle').nth(1).getAttribute('data-key'),firstKey,'Drag moves item');
  await selects.nth(1).selectOption('title');
  assert.equal(adds,0,'No automatic cart writes');
  const add=panel.getByRole('button',{name:'Add Alice Coltrane: Journey in Satchidananda to cart',exact:true});
@@ -98,6 +122,16 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.cart-total').textContent.includes('29.65'));
  assert.match(await panel.locator('.cart-summary').innerText(),/10% off eligible records/);
  assert.match(await panel.locator('.cart-price').innerText(),/32.95/,'Line price stays independent of cart-level discount');
+ const oneItem=fakeCart.items[0];
+ fakeCart.items=Array.from({length:8},(_,i)=>({...oneItem,key:i?'preview:'+i:oneItem.key,product_title:i?'A longer album title: Anniversary edition vinyl 2LP '+i:oneItem.product_title}));
+ await panel.getByRole('button',{name:'Refresh cart',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelectorAll('.cart-item').length===8);
+ assert.equal(await panel.locator('.cart').evaluate(el=>getComputedStyle(el).overflowY),'hidden','Cart shell does not create a second scroll region');
+ assert.ok(await panel.locator('.cart-items').evaluate(el=>el.scrollHeight>el.clientHeight),'Populated cart scrolls');
+ assert.ok(await panel.locator('.cart-items').evaluate(el=>{const right=el.getBoundingClientRect().left+el.clientWidth;return [...el.querySelectorAll('.cart-remove')].every(b=>b.getBoundingClientRect().right<=right-7);}), 'Remove controls stay clear of the scrollbar');
+ await options.click();await page.screenshot({path:'test-results/options-cart.png',fullPage:true});await page.keyboard.press('Escape');
+ fakeCart.items=[oneItem];await panel.getByRole('button',{name:'Refresh cart',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelectorAll('.cart-item').length===1);
  const browseWidth=(await panel.locator('.panel').boundingBox()).width;
  assert.ok(browseWidth>=800 && browseWidth<=841,'Browsing column remains readable without spanning the screen');
  assert.ok((await panel.boundingBox()).width<=1161,'Centered layout has a bounded total width');
@@ -137,6 +171,7 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await page.screenshot({path:'test-results/mobile.png',fullPage:true});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'No mobile overflow');
  await panel.getByRole('button',{name:'Tiles',exact:true}).click();
+ assert.ok(await panel.locator('.tiles .record').evaluateAll(rows=>rows.every(row=>{const r=row.getBoundingClientRect(),p=row.querySelector('.price').getBoundingClientRect(),a=row.querySelector('.item-actions').getBoundingClientRect(),badge=row.querySelector('.badge'),b=badge.getBoundingClientRect();return Math.abs((p.y+p.height/2)-(a.y+a.height/2))<2 && (getComputedStyle(badge).display==='none' || (b.y>=r.y&&b.bottom<=r.bottom));})), 'Mobile tile price/actions align and stock labels stay inside the card');
  await page.screenshot({path:'test-results/mobile-tiles.png',fullPage:true});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'No mobile tile overflow');
  await panel.getByRole('button',{name:'List',exact:true}).click();
@@ -156,9 +191,8 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
    r.querySelector('button').onclick=()=>{r.querySelector('ul').insertAdjacentHTML('beforeend','<li class="gw-wl-product-card"><a class="gw-wl-product-card__title-link" href="/products/beta?variant=2">Björk</a></li>');r.querySelector('button').remove();};
  });
  await page.waitForTimeout(1200);
- await panel.locator('.manage summary').click();
- await panel.getByRole('button',{name:'Load all / retry'}).click();
- await panel.locator('.manage summary').click();
+ await panel.getByRole('button',{name:'Wishlist options',exact:true}).click();
+ await panel.getByRole('menuitem',{name:'Load all / retry'}).click();
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelector('.status').textContent.includes('All displayed'));
  assert.equal(await panel.locator('.record').count(),2,'V2 cards and pagination');
  await page.evaluate(()=>{
@@ -172,6 +206,15 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  await page.evaluate(()=>{document.querySelector('.gw-wl-page-placeholder').shadowRoot.innerHTML='<div class="gw-wl-v2">Empty wishlist</div>';});
  await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist').shadowRoot.querySelectorAll('.record').length===0);
  assert.deepEqual(errors,[]);
+ // Saved order survives a new page load, even if the native order is different.
+ await page.goto(base);
+ await page.evaluate(order=>{
+   window.browser={storage:{local:{get:async()=>({ttlPreferences:{sort:'manual',stock:'all'},['ttlOrder:'+location.origin]:order}),set:async()=>{}}}};
+   document.querySelector('.gw-wl-page-placeholder').innerHTML='<li class="gw-wl-page-item" data-gw-variant-id="1"><a class="gw-wl-page-item__title" href="/products/alpha?variant=1">Alice</a></li><li class="gw-wl-page-item" data-gw-variant-id="2"><a class="gw-wl-page-item__title" href="/products/beta?variant=2">Bjork</a></li>';
+ },savedOrder);
+ for(const file of ['core.js','cart.js','content.js'])await page.addScriptTag({path:path.resolve('extension',file)});
+ await page.waitForFunction(()=>document.querySelector('#ttl-better-wishlist')?.shadowRoot.querySelector('.status').textContent.includes('Stock checked: 2/2'));
+ assert.deepEqual(await page.locator('#ttl-better-wishlist .product').evaluateAll(links=>links.map(a=>a.href)),savedOrder.filter(key=>/products\/(alpha|beta)\?/.test(key)),'Saved custom order restored');
  // The same implementation can run on an opt-in store without TTL URLs.
  await page.goto('https://example-shop.test/pages/wishlist');
  await page.evaluate(()=>{
@@ -184,5 +227,3 @@ assert.deepEqual(core.select([{title:'A',price:null,status:'in',order:0},{title:
  console.log('PASS: filtering, pagination, stock refresh, both Growave removal layouts, variant-specific cart add, duplicate-click guard, rejected add, cart subtotal, sticky sidebar, mobile width, and browser errors.');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});
-
-
